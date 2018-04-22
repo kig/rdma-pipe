@@ -1,27 +1,63 @@
 #!/usr/bin/ruby
+require 'optparse'
 
-USAGE = "rdpipe HOST:CMD ..."
+VERSION = "1"
+
+options = {}
+OptionParser.new do |opts|
+  opts.banner = "Usage: rdpipe [options] HOST:CMD ..."
+
+  opts.on("-v", "--verbose", "Run verbosely") do |v|
+    options[:verbose] = v
+  end
+
+  opts.on("-n", "--dryrun", "Print out pipeline commands but don't execute them") do |v|
+  	options[:dryrun] = v
+  end
+
+  opts.on("-p", "--port=PORT", "Port to use for the pipeline") do |v|
+  	options[:port] = v
+  end
+
+  opts.on("-H", "--hostname=HOSTNAME", "Hostname or ip to use for the initiating server") do |v|
+  	options[:hostname] = v
+  end
+
+  opts.on_tail("-V", "--version", "Print out the version and exit") do |v|
+  	STDERR.puts(VERSION)
+  	exit(0)
+  end
+
+  opts.on_tail("-h", "--help", "Print out these instructions and exit") do |v|
+  	STDERR.puts(opts)
+  	exit(0)
+  end
+
+end.parse!
+
 
 if ARGV.length < 1
-	STDERR.puts(USAGE)
-	exit!(1)
+	STDERR.puts(opts)
+	exit(1)
 end
 
-$dryrun = false
-if ARGV.delete("-n")
-	$dryrun = true
+default_port = "7691"
+
+$dryrun = options[:dryrun]
+verbose = options[:verbose] ? "-v" : ""
+sendport = options[:port] || default_port
+localhost = options[:hostname] || (`hostname`.strip)
+
+def spawn(*args, opts)
+	if $dryrun
+		p(args)
+	else
+		Process.spawn(*args, opts)
+	end
 end
 
-verbose = ""
-if ARGV.delete("-v")
-	verbose = "-v"
-end
 
 dir = File.dirname(__FILE__)
-
-recvport = "7692"
-sendport = "7691"
-localhost = `hostname`.strip
 
 key = rand.to_s
 
@@ -75,16 +111,6 @@ hostcmds.each_with_index do |(host,cmd), idx|
 
 	sshcmds << [host, sshcmd]
 end
-
-
-def spawn(*args, opts)
-	if $dryrun
-		p(args)
-	else
-		Process.spawn(*args, opts)
-	end
-end
-
 
 #if not no_input
 	recvpid = spawn("#{dir}/rdrecv", sendport, key, :in => :close, :err => :err, :out => :out)
