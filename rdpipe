@@ -21,7 +21,7 @@ dir = File.dirname(__FILE__)
 
 recvport = "7692"
 sendport = "7691"
-localhost = "t420"
+localhost = `hostname`.strip
 
 key = rand.to_s
 
