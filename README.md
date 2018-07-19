@@ -2,6 +2,8 @@
 
 Utility programs to pipe data across a RDMA-capable network (e.g. InfiniBand, RoCE).
 
+Benchmarked on QDR InfiniBand network to go at 3 GB/s when piping a file to remote `/dev/null`, 1.7 GB/s when piping from page cache to `wc -c`.
+
 
 
 # Installation
