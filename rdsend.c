@@ -21,16 +21,16 @@
 #include <rdma/rdma_cma.h>
 
 enum   { 
-        RESOLVE_TIMEOUT_MS = 5000, 
+	RESOLVE_TIMEOUT_MS = 5000, 
 }; 
 
 struct pdata { 
-        uint64_t	buf_va; 
-        uint32_t	buf_rkey;
+	uint64_t	buf_va; 
+	uint32_t	buf_rkey;
 }; 
 
 void usage() {
-    fprintf(stderr, "USAGE: rdsend [-v] <server> <port> <key>\n");
+	fprintf(stderr, "USAGE: rdsend [-v] <server> <port> <key>\n");
 }
 
 
@@ -233,30 +233,30 @@ int main(int argc, char   *argv[ ])
 	int argv_idx = 1;
 	
 
-    if (argc < 4) {
-        usage();
-        return 1;
-    }
+	if (argc < 4) {
+		usage();
+		return 1;
+	}
 
-    if (strcmp(argv[argv_idx], "-v") == 0) {
-    	verbose++;
-    	argv_idx++;
-    }
+	if (strcmp(argv[argv_idx], "-v") == 0) {
+		verbose++;
+		argv_idx++;
+	}
 
-    host = argv[argv_idx++];
-    ports = argv[argv_idx++];
+	host = argv[argv_idx++];
+	ports = argv[argv_idx++];
 
-    port = atoi(ports);
+	port = atoi(ports);
 
-    if (port < 1 || port > 65535)
-    {
-        usage();
-        fprintf(stderr, "\nError: Port should be between 1 and 65535, got %d instead.\n\n", port);
-        return 1;
-    }
+	if (port < 1 || port > 65535)
+	{
+		usage();
+		fprintf(stderr, "\nError: Port should be between 1 and 65535, got %d instead.\n\n", port);
+		return 1;
+	}
 
-    key = argv[argv_idx++];
-    keylen = strlen(key);
+	key = argv[argv_idx++];
+	keylen = strlen(key);
 
 	buf = calloc(buf_size*2+4, 1); 
 	if (!buf) 
@@ -264,7 +264,7 @@ int main(int argc, char   *argv[ ])
 	buf2 = (uint32_t*)(((char*)buf) + buf_size);
 
 
-    /* RDMA CM */
+	/* RDMA CM */
 	cm_channel = rdma_create_event_channel(); 
 	if (!cm_channel)  
 		return 101; 
@@ -297,10 +297,10 @@ int main(int argc, char   *argv[ ])
 
 	/* Read some bytes from STDIN, send them over with IBV_WR_SEND */
 
-    clock_gettime(CLOCK_REALTIME, &tmstart);
-    total_bytes = 0;
+	clock_gettime(CLOCK_REALTIME, &tmstart);
+	total_bytes = 0;
 
-    memcpy((buf+1), key, keylen+1);
+	memcpy((buf+1), key, keylen+1);
 
 	buf_read_bytes = read_bytes = max(0, read(STDIN_FILENO, ((void*)(buf+1))+keylen+1, buf_size-4-keylen-1)) + keylen + 1;
 	// while (read_bytes && buf_read_bytes < buf_size-4) {
@@ -384,16 +384,16 @@ int main(int argc, char   *argv[ ])
 		//printf("%d %d %d\n", read_bytes, buf_read_bytes, buf[0]);
 	}
 
-    clock_gettime(CLOCK_REALTIME, &now);
-    seconds = (double)((now.tv_sec+now.tv_nsec*1e-9) - (double)(tmstart.tv_sec+tmstart.tv_nsec*1e-9));
-    if (verbose > 0) {
-	    fprintf(stderr, "Bandwidth %.3f GB/s\n", (total_bytes / seconds) / 1e9);
+	clock_gettime(CLOCK_REALTIME, &now);
+	seconds = (double)((now.tv_sec+now.tv_nsec*1e-9) - (double)(tmstart.tv_sec+tmstart.tv_nsec*1e-9));
+	if (verbose > 0) {
+		fprintf(stderr, "Bandwidth %.3f GB/s\n", (total_bytes / seconds) / 1e9);
 	}
 
-    ibv_ack_cq_events(cq, event_count);
+	ibv_ack_cq_events(cq, event_count);
 
 	rdisconnect(cm_channel, cm_id, mr, cq, pd, comp_chan);
 	rdma_destroy_event_channel(cm_channel);
 
-    return 0;
+	return 0;
 }
