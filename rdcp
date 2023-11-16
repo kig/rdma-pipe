@@ -1,0 +1,163 @@
+#!/bin/bash
+
+args=
+dryrun=
+recursive=
+verbose=
+
+while getopts vzrn flag
+do
+    case "${flag}" in
+        v) args="$args -v"; verbose="-v";;
+        z) args="$args -z";;
+        r) args="$args -r"; recursive="1";;
+        n) dryrun="echo";;
+    esac
+done
+
+source=${@:$OPTIND:1}
+target=${@:$OPTIND+1:1}
+
+ssh=$(which ssh)
+ssh_flags="-t -t -o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=1"
+
+# Split the host:filename into host and filename
+# If there is no : set host to ""
+
+if [ "$source" = "" ]; then
+    echo "Usage: $0 [-v] [-z] [-r] source target"
+    exit
+fi
+# Check if source contains a colon
+if [[ $source == *":"* ]]; then
+    # Split source into host and filename
+    source_host=${source%%:*}
+    source_filename=${source#*:}
+else
+    # No colon, so set host to ""
+    source_host=""
+    source_filename=$source
+    if [ $source_filename = "-" ]
+    then
+        source_filename="/dev/stdin"
+    fi
+fi
+
+if [ "$target" = "" ]; then
+    echo "Usage: $0 [-v] [-z] [-r] source target"
+    exit
+fi
+# Check if target contains a colon
+if [[ $target == *":"* ]]; then
+    # Split target into host and filename
+    target_host=${target%%:*}
+    target_filename=${target#*:}
+else
+    # No colon, so set host to ""
+    target_host=""
+    target_filename=$target
+    if [ $target_filename = "-" ]
+    then
+        target_filename="/dev/stdout"
+    fi
+fi
+
+# If the host is the same as the target, then we can just copy the file
+# locally.  Otherwise, we need to copy it remotely.
+
+if [ "$source_host" = "$target_host" ]; then
+    if [ "$source_host" = "" ]; then
+        if [ "$recursive" = "1" ]; then
+           $dryrun cp -a "$source_filename" "$target_filename"
+        else
+           $dryrun cp "$source_filename" "$target_filename"
+        fi
+    else
+        if [ "$recursive" = "1" ]; then
+           $dryrun $ssh $ssh_flags $source_host cp -a "$source_filename" "$target_filename"
+        else
+            $dryrun $ssh $ssh_flags $source_host cp "$source_filename" "$target_filename"
+        fi
+    fi
+    exit
+fi
+
+# Remote copy using the rdma protocol.
+# We use rdsend on the source host to send the file, and rdrecv to receive it.
+
+# Pick a random port number to use for the rdma connection.
+# We use the same port number for both rdsend and rdrecv.
+
+rdma_target_host=${target_host#*@}
+
+port=$(( 10000 + ( RANDOM % 10000 ) ))
+
+# Pick a random password to use for the rdma connection.
+
+password=$(head -c 12 /dev/urandom | od -An -t x | tr -d ' ')
+
+# If any of the programs fail, kill them all to avoid leaving zombies.
+
+function cleanup() {
+    kill -HUP $recv_pid $send_pid 2>/dev/null
+}
+trap cleanup EXIT
+
+if [ "$recursive" = "1" ]; then
+    # This should work like cp -a source target 
+    # If target doesn't exist, create it. If it does, copy source into target/source.
+    # (cd src && tar c .) | ((cd dst && mkdir src && tar xC src) || (mkdir dst && tar xC dst))
+    source_basename=$(basename "$source_filename")
+    if [ "$source_host" = "" ]; then
+        $dryrun $ssh $ssh_flags $target_host rdrecv $verbose $port $password \| \(\(cd "$target_filename" 2\>/dev/null \&\& mkdir "$source_basename" \&\& tar xC "$source_basename"\) \|\| \(mkdir "$target_filename" \&\& tar xC "$target_filename"\)\) &
+        recv_pid=$!
+        # send from source filename
+        if [ "$dryrun" = "echo" ]; then
+            echo \(cd "$source_filename" \&\& tar c .\) \| rdsend $verbose $rdma_target_host $port $password &
+            send_pid=$!
+        else
+            (cd "$source_filename" && tar c .) | rdsend $verbose $rdma_target_host $port $password &
+            send_pid=$!
+        fi
+        wait
+    elif [ "$target_host" = "" ]; then
+        if [ $dryrun = "echo" ]; then
+            rdrecv $verbose $port $password \| \(\(cd "$target_filename" 2\>/dev/null \&\& mkdir "$source_basename" \&\& tar xC "$source_basename"\) \|\| \(mkdir "$target_filename" \&\& tar xC "$target_filename"\)\) &
+            recv_pid=$!
+        else
+            rdrecv $verbose $port $password | ((cd "$target_filename" 2>/dev/null && mkdir "$source_basename" && tar xC "$source_basename") || (mkdir "$target_filename" && tar xC "$target_filename")) &
+            recv_pid=$!
+        fi
+        $dryrun $ssh $ssh_flags $source_host \(cd "$source_filename" && tar c .\) \| rdsend $verbose $rdma_target_host $port $password &
+        send_pid=$!
+        wait
+    else
+        $dryrun $ssh $ssh_flags $target_host rdrecv $verbose $port $password \| \(\(cd "$target_filename" 2\>/dev/null \&\& mkdir "$source_basename" \&\& tar xC "$source_basename"\) \|\| \(mkdir "$target_filename" \&\& tar xC "$target_filename"\)\) &
+        recv_pid=$!
+        $dryrun $ssh $ssh_flags $source_host \(cd "$source_filename" && tar c .\) \| rdsend $verbose $rdma_target_host $port $password &
+        send_pid=$!
+        wait
+    fi
+else
+    if [ "$source_host" = "" ]; then
+        # pipe to target filename
+        $dryrun $ssh $ssh_flags $target_host rdrecv $verbose $port $password \> "$target_filename" &
+        recv_pid=$!
+        # send from source filename
+        $dryrun rdsend $verbose $rdma_target_host $port $password < "$source_filename" &
+        send_pid=$!
+        wait
+    elif [ "$target_host" = "" ]; then
+        $dryrun rdrecv $verbose $port $password > "$target_filename" &
+        recv_pid=$!
+        $dryrun $ssh $ssh_flags $source_host rdsend $verbose $rdma_target_host $port $password \< "$source_filename"
+        send_pid=$!
+        wait
+    else
+        $dryrun $ssh $ssh_flags $target_host rdrecv $verbose $port $password \> "$target_filename" &
+        recv_pid=$!
+        $dryrun $ssh $ssh_flags $source_host rdsend $verbose $rdma_target_host $port $password \< "$source_filename" &
+        send_pid=$!
+        wait
+    fi
+fi

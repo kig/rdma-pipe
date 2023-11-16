@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-O2 -mavx -Wall -Werror
+CFLAGS=-fopenmp -lzstd -O2 -mavx -Wall -Werror
 INCLUDES=
 LDFLAGS=
 LIBS=-lrdmacm -libverbs
