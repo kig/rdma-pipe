@@ -37,9 +37,9 @@ The following test was done on Infiniband FDR 56 Gbps.
 [sending-host]$ rdsend -v receiving-host 12345 password_string <big_file
 Bandwidth 5.127 GB/s
 
-# For optimized file I/O, you can pass a filename as the last arg.
-# In file I/O mode, the file is read in using multiple threads, and written out similarly.
-# This should give you higher write bandwidth on NVMe and fast networks.
+# For optimized file I/O, set the last arg to a filename.
+# This should give you higher write bandwidth on NVMe devices.
+# (File I/O uses 16 threads and writes using direct IO when possible.)
 [receiving-host]$ rdrecv 12345 password target_file
 [sending-host]$ rdsend receiving-host 12345 password source_file
 ```
@@ -84,7 +84,7 @@ To pipe data from hostA to hostB:
 
 The commands are best executed with rdrecv first, so that rdsend can connect on the first attempt. 
 
-If rdrecv is not up, rdsend tries to connect for 180 seconds before timing out.
+If rdrecv is not up, rdsend tries to connect for ~10 seconds before timing out.
 
 
 # Troubleshooting
