@@ -2,7 +2,7 @@
 
 Pipe data across RDMA (InfiniBand, RoCE).
 
-Use `rdcp` to copy files over RDMA. It uses `ssh` to start the receiver on the remote end and then sends the file over.
+Use `rdcp` to copy files over RDMA. Uses `ssh` to start the receiver on the remote end and then sends the file over.
 
 ```bash
 $ rdcp -v big_file receiving-host:/dev/shm/big_file
