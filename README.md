@@ -68,12 +68,9 @@ Bandwidth 5.127 GB/s
 
 # Usage
 
+## rdcp - Copy files over RDMA
+
 ```bash
-rdsend [-v] HOST PORT KEY [FILE]
-# -v Print out the send bandwidth at the end.
-
-rdrecv PORT KEY [FILE]
-
 rdcp [-v] [-r] SRC DST
 # -v Print out the bandwidth.
 # -r Copy a directory tree.
@@ -97,6 +94,19 @@ rdcp [-v] [-r] SRC DST
 #
 # Copy a directory from a server.
 # $ rdcp -r server:dir dir
+```
+
+## rdsend - Send data over RDMA
+
+```bash
+rdsend [-v] HOST PORT KEY [FILE]
+# -v Print out the send bandwidth at the end.
+```
+
+## rdrecv - Receive data over RDMA
+
+```bash
+rdrecv PORT KEY [FILE]
 ```
 
 To pipe data from hostA to hostB:
