@@ -16,13 +16,35 @@ Bandwidth 0.432 GB/s
 Use `rdrecv` and `rdsend` to pipe data over RDMA.
 
 ```bash
-[receiving-host]$ rdrecv 12345 password_string
-[sending-host]$ echo 'Hello RDMA!' | rdsend receiving-host 12345 password_string
+[receiving-host]$ rdrecv 12345 some_key_string
+[sending-host]$ echo 'Hello RDMA!' | rdsend receiving-host 12345 some_key_string
+
+# It's nice for sending ZFS snapshots.
+backup$ rdrecv 1234 super_great | zfs recv rpool/home
+live$ zfs send rpool/home@today | rdsend backup 1234 super_great
 ```
 
-NOTE: This version is not backwards compatible with the 2019 version. The protocol has changed.
-(The old protocol prefixed the send buffers with the length of the buffer. The new protocol uses the RDMA send length field. This change makes the code simpler and we can align the buffers to 4k pages for direct IO.)
+# Install
 
+```bash
+make && sudo cp rd{cp,send,recv} /usr/local/bin
+```
+
+You need the rdmacm and libibverbs development libraries.
+
+On Ubuntu:
+
+    # apt install -y rdma-core librdmacm-dev
+
+On CentOS 7:
+
+    # yum install -y rdma-core-devel
+
+# Uninstall
+
+```bash
+sudo rm /usr/local/bin/rd{cp,send,recv}
+```
 
 ## How fast is it?
 
@@ -44,28 +66,38 @@ Bandwidth 5.127 GB/s
 [sending-host]$ rdsend receiving-host 12345 password source_file
 ```
 
-# Installation
-
-Install the rdmacm and libibverbs development libraries.
-
-On Ubuntu:
-
-    # apt install -y rdma-core librdmacm-dev
-
-On CentOS 7:
-
-    # yum install -y rdma-core-devel
-
-Compile the programs:
-
-    $ make
-
-Install the programs to somewhere in your path:
-
-    $ cp rdcp rdsend rdrecv /usr/local/bin/
-
-
 # Usage
+
+```bash
+rdsend [-v] HOST PORT KEY [FILE]
+# -v Print out the send bandwidth at the end.
+
+rdrecv PORT KEY [FILE]
+
+rdcp [-v] [-r] SRC DST
+# -v Print out the bandwidth.
+# -r Copy a directory tree.
+# SRC The source file or directory.
+# DST The destination file or directory.
+#
+# SRC and DST can be local paths or remote paths.
+#
+# E.g. /home/user/file, host:file, user@host:file
+#
+# Examples:
+#
+# Copy file to a server.
+# $ rdcp file server:file
+#
+# Copy file from a server.
+# $ rdcp server:file file
+#
+# Copy a directory to a server.
+# $ rdcp -r dir server:dir
+#
+# Copy a directory from a server.
+# $ rdcp -r server:dir dir
+```
 
 To pipe data from hostA to hostB:
 ```bash
@@ -85,6 +117,21 @@ To pipe data from hostA to hostB:
 The commands are best executed with rdrecv first, so that rdsend can connect on the first attempt. 
 
 If rdrecv is not up, rdsend tries to connect for ~10 seconds before timing out.
+
+# Notes
+
+Data is sent as-is, so if you need encryption or compression, try piping through `openssl` and `pzstd`. Something like the below.
+
+```bash
+recv$ rdrecv 1234 my_key | openssl enc -aes-256-cbc -pbkdf2 -d -k "super_secure" | pzstd -d > wow
+send$ pzstd -1 -c wow | openssl enc -aes-256-cbc -pbkdf2 -k "super_secure" | rdsend recv 1234 my_key
+```
+
+In my testing, `pzstd` runs at 1.6 GB/s, `openssl` at 500 MB/s. For decent perf, I should roll these into the `rdsend` / `rdrecv` programs.
+(OpenSSL running on 16 cores should give you 8 GB/s and I have per-block compression in [crash](https://github.com/kig/crash) that goes at 10+ GB/s on a good day.)
+
+**WARNING** This version is not backwards compatible with the 2019 version. The protocol has changed.
+(The old protocol prefixed the send buffers with the length of the buffer. The new protocol uses the RDMA send length field. This change makes the code simpler and we can align the buffers to 4k pages for direct IO.)
 
 
 # Troubleshooting
