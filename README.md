@@ -20,6 +20,9 @@ Use `rdrecv` and `rdsend` to pipe data over RDMA.
 [sending-host]$ echo 'Hello RDMA!' | rdsend receiving-host 12345 password_string
 ```
 
+NOTE: This version is not backwards compatible with the 2019 version. The protocol has changed.
+(The old protocol prefixed the send buffers with the length of the buffer. The new protocol uses the RDMA send length field. This change makes the code simpler and we can align the buffers to 4k pages for direct IO.)
+
 
 ## How fast is it?
 
