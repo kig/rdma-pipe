@@ -5,7 +5,7 @@ Pipe data across RDMA (InfiniBand, RoCE).
 Use `rdcp` to copy files over RDMA. Uses `ssh` to start the receiver on the remote end and then sends the file over.
 
 ```bash
-$ rdcp -v big_file receiving-host:/dev/shm/big_file
+$ rdcp -v big_file receiving-host:/dev/null
 Bandwidth 5.103 GB/s
 
 # You can also send directory trees.
@@ -61,9 +61,23 @@ Bandwidth 5.127 GB/s
 
 # For optimized file I/O, set the last arg to a filename.
 # This should give you higher write bandwidth on NVMe devices.
-# (File I/O uses 16 threads and writes using direct IO when possible.)
-[receiving-host]$ rdrecv 12345 password target_file
-[sending-host]$ rdsend receiving-host 12345 password source_file
+# (File I/O uses 8 threads and writes using direct IO when possible.)
+# You probably need to play with taskset CPU pinning to get the best perf.
+[receiving-host]$ taskset -c 4 rdrecv 12345 password >/dev/null
+[sending-host]$ taskset -c 16,20,24 rdsend receiving-host 12345 password source_file
+Bandwidth 5.636 GB/s
+
+# If your file is in page cache, just < pipe it to rdsend.
+# The O_DIRECT file I/O is slower in that case.
+# I would like to make this automatic.
+
+# Write speed is still WIP.
+# This is on a 4x NVMe SSD RAID-10, with 14 GB/s write bandwidth in fio.
+# The network transfer goes at 5.1 GB/s. The write speed is 3.7 GB/s.
+# The bottleneck is the file I/O on the receiving end.
+[receiving-host]$ taskset -c 16 rdrecv 12345 password target_file
+[sending-host]$ taskset -c 8-16 rdsend receiving-host 12345 password source_file
+Bandwidth 3.756 GB/s
 ```
 
 # Usage
