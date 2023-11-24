@@ -112,7 +112,7 @@ int main(int argc, char *argv[]) {
   int use_parallel_writes = 0;
 
   int fd = STDOUT_FILENO;
-  int fds[16];
+  int fds[8];
   if (argv_idx < argc) {
     // Open the file for writing.
     fd = open(argv[argv_idx], O_WRONLY | O_CREAT | O_TRUNC,
@@ -122,8 +122,8 @@ int main(int argc, char *argv[]) {
       return 200;
     }
     use_parallel_writes = 1;
-    // Open 16 parallel file descriptors.
-    for (int i = 0; i < 16; i++) {
+    // Open 8 parallel file descriptors.
+    for (int i = 0; i < 8; i++) {
       fds[i] = open(argv[argv_idx], O_WRONLY | O_DIRECT);
       if (fds[i] < 0) {
         use_parallel_writes = 0;
@@ -345,8 +345,12 @@ int main(int argc, char *argv[]) {
         // we're writing to a sector-aligned address and the message is
         // sector-aligned.
         if (use_parallel_writes == 0 || total_bytes % 4096 != 0 ||
-            msgLen % 4096 != 0) {
+            msgLen != 8 * 1048576) {
+          lseek(fd, total_bytes, SEEK_SET);
           ssize_t res = write(fd, cbuf, msgLen);
+          while (res < msgLen) {
+            res += write(fd, cbuf+res, msgLen-res);
+          }
           total_bytes += res;
           if (res == -1) {
             fprintf(stderr, "Write error %d\n", errno);
@@ -362,28 +366,21 @@ int main(int argc, char *argv[]) {
           ssize_t buf_written_bytes = 0;
           int error = 0;
 #pragma omp parallel for
-          for (int i = 0; i < 16; i++) {
+          for (int j = 0; j < 8; j++) {
             // Seek to the correct position.
-            lseek(fds[i], total_bytes + i * 524288, SEEK_SET);
+            lseek(fds[j], total_bytes + j * 1048576, SEEK_SET);
+            ssize_t res = 0;
             // Write the data.
-            ssize_t dataLen = 524288;
-            if (msgLen < (i + 1) * 524288) {
-              if (msgLen < i * 524288) {
-                dataLen = 0;
-              } else {
-                dataLen = msgLen - i * 524288;
-              }
+            while (res < 1048576) {
+              res += write(fds[j], cbuf + j * 1048576 + res, 1048576 - res);
             }
-            if (dataLen > 0) {
-              ssize_t res = write(fds[i], cbuf + i * 524288, dataLen);
 // Atomic add to buf_written_bytes
 #pragma omp atomic
-              buf_written_bytes += res;
+            buf_written_bytes += res;
 
-              if (res == -1) {
-                fprintf(stderr, "Write error %d\n", errno);
-                error = 1;
-              }
+            if (res == -1) {
+              fprintf(stderr, "Write error %d\n", errno);
+              error = 1;
             }
           }
           if (error == 1) {
@@ -401,7 +398,7 @@ int main(int argc, char *argv[]) {
   }
 
   close(fd);
-  for (i = 0; i < 16; i++) {
+  for (i = 0; i < 8; i++) {
     close(fds[i]);
   }
 
