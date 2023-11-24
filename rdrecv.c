@@ -23,7 +23,7 @@
 
 // #include "fast_memcpy.h"
 // Use zstd to compress data on the fly.
-#include <zstd.h>
+// #include <zstd.h>
 // Use OpenMP to parallelize compression and IO.
 #include <omp.h>
 
