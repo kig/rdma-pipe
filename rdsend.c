@@ -8,6 +8,8 @@
  * authenticating with the key.
  *
  */
+#define _GNU_SOURCE
+
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netdb.h>
@@ -256,7 +258,7 @@ int main(int argc, char *argv[]) {
   if (argv_idx < argc) {
     fd = open(argv[argv_idx], O_RDONLY);
     // Ask kernel to read the file to page cache.
-    posix_fadvise(fd, 0, 0, POSIX_FADV_WILLNEED);
+    // posix_fadvise(fd, 0, 0, POSIX_FADV_WILLNEED);
     if (fd < 0) {
       fprintf(stderr, "Error opening file %s\n", argv[argv_idx]);
       return 200;
@@ -264,6 +266,7 @@ int main(int argc, char *argv[]) {
     // Open 16 parallel file descriptors.
     for (int i = 0; i < 16; i++) {
       fds[i] = open(argv[argv_idx], O_RDONLY | O_DIRECT);
+      posix_fadvise (fds[i], 0, 0, POSIX_FADV_NOREUSE);
       if (fds[i] < 0) {
         fprintf(stderr, "Error opening file %s\n", argv[argv_idx]);
         return 200;
