@@ -263,7 +263,7 @@ int main(int argc, char *argv[]) {
     }
     // Open 16 parallel file descriptors.
     for (int i = 0; i < 16; i++) {
-      fds[i] = open(argv[argv_idx], O_RDONLY);
+      fds[i] = open(argv[argv_idx], O_RDONLY | O_DIRECT);
       if (fds[i] < 0) {
         fprintf(stderr, "Error opening file %s\n", argv[argv_idx]);
         return 200;
@@ -271,9 +271,10 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  buf = calloc(buf_size * 2 + 4, 1);
-  if (!buf)
+  if (posix_memalign((void *)&buf, 4096, buf_size * 2 + 4)) {
+    perror("posix_memalign failed");
     return 113;
+  }
   buf2 = (uint32_t *)(((char *)buf) + buf_size);
 
   /* RDMA CM */
@@ -308,22 +309,11 @@ int main(int argc, char *argv[]) {
   recv_wr.sg_list = &rsge;
   recv_wr.num_sge = 1;
 
-  /* Read some bytes from STDIN, send them over with IBV_WR_SEND */
-
   clock_gettime(CLOCK_REALTIME, &tmstart);
   total_bytes = 0;
 
   memcpy((void *)buf, key, keylen + 1);
 
-  // buf_read_bytes = read_bytes =
-  //     max(0, read(fd, ((void *)(buf + 1)) + keylen + 1,
-  //                 buf_size - 4 - keylen - 1)) +
-  //     keylen + 1;
-  // while (read_bytes && buf_read_bytes < buf_size-4) {
-  // 	read_bytes = read(STDIN_FILENO, ((void*)(buf+1)) + buf_read_bytes,
-  // buf_size-4-buf_read_bytes); 	buf_read_bytes += read_bytes;
-  // }
-  // fprintf(stderr, "%d %d\n", read_bytes, errno);
   buf_read_bytes = keylen + 1;
   total_bytes = 0;
 
@@ -357,20 +347,17 @@ int main(int argc, char *argv[]) {
     buf2 = tmp;
 
     if (fd != STDIN_FILENO) {
-      // Do a striped parallel read from fd and compress the data.
-      // We do 16 parallel reads, each of 500 kiB.
-      // We compress each 500 kiB block with zstd.
-
-      // Parallel for loop to read the bytes. Each thread reads 500 kiB.
+      // Do a striped parallel read from fd.
+      // Parallel for loop to read the bytes.
       buf_read_bytes = 0;
 #pragma omp parallel for
-      for (int i = 0; i < 16; i++) {
-        // Read 500 kiB from fd.
+      for (int i = 0; i < 8; i++) {
+        // Read 1 MiB from fd.
         // seek to the correct position in the file.
         // Last block ended at total_bytes.
-        size_t seek_pos = total_bytes + i * 524288;
+        size_t seek_pos = total_bytes + i * 1048576;
         lseek(fds[i], seek_pos, SEEK_SET);
-        int read_bytes = read(fds[i], ((void *)buf) + i * 524288, 524288);
+        int read_bytes = read(fds[i], ((void *)buf) + i * 1048576, 1048576);
         if (read_bytes > 0) {
 // Atomic add to buf_read_bytes.
 #pragma omp atomic
