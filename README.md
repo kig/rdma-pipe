@@ -78,6 +78,15 @@ Bandwidth 5.636 GB/s
 [receiving-host]$ taskset -c 16 rdrecv 12345 password target_file
 [sending-host]$ taskset -c 8-16 rdsend receiving-host 12345 password source_file
 Bandwidth 3.756 GB/s
+
+# Writing to ZFS is faster as the write lands into the ARC.
+# (I think my ZFS settings are running with scissors.)
+# For production use, this _might_ be fine if you're just slinging files around in a cluster.
+# Now how to get the mdraid + ext4 to match this...
+[receiving-host]$ taskset -c 16 rdrecv 12345 password /zfs/target_file
+[sending-host]$ taskset -c 8-16 rdsend receiving-host 12345 password source_file
+Bandwidth 5.329 GB/s
+
 ```
 
 # Usage
