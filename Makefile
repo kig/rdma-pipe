@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-fopenmp -lzstd -O2 -mavx -Wall -Werror
+CFLAGS=-fopenmp -O2 -mavx -Wall -Werror
 INCLUDES=
 LDFLAGS=
 LIBS=-lrdmacm -libverbs
@@ -24,3 +24,9 @@ rdrecv: $(OBJS)
 
 clean:
 	$(RM) *.o *~ $(PROG)
+
+install: $(PROG)
+	install -m 0755 $(PROG) rdcp /usr/local/bin
+
+uninstall:
+	cd /usr/local/bin && $(RM) $(PROG) rdcp

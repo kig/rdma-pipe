@@ -27,7 +27,7 @@ live$ zfs send rpool/home@today | rdsend backup 1234 super_great
 # Install
 
 ```bash
-make && sudo cp rd{cp,send,recv} /usr/local/bin
+sudo make install
 ```
 
 You need the rdmacm and libibverbs development libraries.
@@ -43,7 +43,7 @@ On CentOS 7:
 # Uninstall
 
 ```bash
-sudo rm /usr/local/bin/rd{cp,send,recv}
+sudo make uninstall
 ```
 
 ## How fast is it?
