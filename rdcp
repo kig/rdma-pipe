@@ -1,8 +1,8 @@
 #!/bin/bash
 
 args=
-dryrun=
 recursive=
+verbose=
 
 while getopts vr flag
 do
