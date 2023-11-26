@@ -3,15 +3,12 @@
 args=
 dryrun=
 recursive=
-verbose=
 
-while getopts vzrn flag
+while getopts vr flag
 do
     case "${flag}" in
         v) args="$args -v"; verbose="-v";;
-        z) args="$args -z";;
         r) args="$args -r"; recursive="1";;
-        n) dryrun="echo";;
     esac
 done
 
@@ -25,7 +22,7 @@ ssh_flags="-t -t -o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=5 -
 # If there is no : set host to ""
 
 if [ "$source" = "" ]; then
-    echo "Usage: $0 [-v] [-z] [-r] source target"
+    echo "Usage: $0 [-v] [-r] source target"
     exit
 fi
 # Check if source contains a colon
@@ -44,7 +41,7 @@ else
 fi
 
 if [ "$target" = "" ]; then
-    echo "Usage: $0 [-v] [-z] [-r] source target"
+    echo "Usage: $0 [-v] [-r] source target"
     exit
 fi
 # Check if target contains a colon
@@ -68,15 +65,15 @@ fi
 if [ "$source_host" = "$target_host" ]; then
     if [ "$source_host" = "" ]; then
         if [ "$recursive" = "1" ]; then
-           $dryrun cp -a "$source_filename" "$target_filename"
+            cp -a "$source_filename" "$target_filename"
         else
-           $dryrun cp "$source_filename" "$target_filename"
+            cp "$source_filename" "$target_filename"
         fi
     else
         if [ "$recursive" = "1" ]; then
-           $dryrun $ssh $ssh_flags $source_host cp -a "$source_filename" "$target_filename"
+            $ssh $ssh_flags $source_host cp -a "$source_filename" "$target_filename"
         else
-            $dryrun $ssh $ssh_flags $source_host cp "$source_filename" "$target_filename"
+            $ssh $ssh_flags $source_host cp "$source_filename" "$target_filename"
         fi
     fi
     exit
@@ -109,54 +106,44 @@ if [ "$recursive" = "1" ]; then
     # (cd src && tar c .) | ((cd dst && mkdir src && tar xC src) || (mkdir dst && tar xC dst))
     source_basename=$(basename "$source_filename")
     if [ "$source_host" = "" ]; then
-        $dryrun $ssh $ssh_flags $target_host rdrecv $verbose $port $password \| \(\(cd "$target_filename" 2\>/dev/null \&\& mkdir "$source_basename" \&\& tar xC "$source_basename"\) \|\| \(mkdir "$target_filename" \&\& tar xC "$target_filename"\)\) &
+        $ssh $ssh_flags $target_host rdrecv $verbose $port $password \| \(\(cd "$target_filename" 2\>/dev/null \&\& mkdir "$source_basename" \&\& tar xC "$source_basename"\) \|\| \(mkdir "$target_filename" \&\& tar xC "$target_filename"\)\) &
         recv_pid=$!
         # send from source filename
-        if [ "$dryrun" = "echo" ]; then
-            echo \(cd "$source_filename" \&\& tar c .\) \| rdsend $verbose $rdma_target_host $port $password &
-            send_pid=$!
-        else
-            (cd "$source_filename" && tar c .) | rdsend $verbose $rdma_target_host $port $password &
-            send_pid=$!
-        fi
+        (cd "$source_filename" && tar c .) | rdsend $verbose $rdma_target_host $port $password &
+        send_pid=$!
         wait
     elif [ "$target_host" = "" ]; then
-        if [ "$dryrun" = "echo" ]; then
-            echo rdrecv $verbose $port $password \| \(\(cd "$target_filename" 2\>/dev/null \&\& mkdir "$source_basename" \&\& tar xC "$source_basename"\) \|\| \(mkdir "$target_filename" \&\& tar xC "$target_filename"\)\) &
-            recv_pid=$!
-        else
-            rdrecv $verbose $port $password | ((cd "$target_filename" 2>/dev/null && mkdir "$source_basename" && tar xC "$source_basename") || (mkdir "$target_filename" && tar xC "$target_filename")) &
-            recv_pid=$!
-        fi
-        $dryrun $ssh $ssh_flags $source_host \(cd "$source_filename" \&\& tar c .\) \| rdsend $verbose \$\{SSH_CLIENT%% \*\} $port $password &
+        rdrecv $verbose $port $password | ((cd "$target_filename" 2>/dev/null && mkdir "$source_basename" && tar xC "$source_basename") || (mkdir "$target_filename" && tar xC "$target_filename")) &
+        recv_pid=$!
+        $ssh $ssh_flags $source_host \(cd "$source_filename" \&\& tar c .\) \| rdsend $verbose \$\{SSH_CLIENT%% \*\} $port $password &
         send_pid=$!
         wait
     else
-        $dryrun $ssh $ssh_flags $target_host rdrecv $verbose $port $password \| \(\(cd "$target_filename" 2\>/dev/null \&\& mkdir "$source_basename" \&\& tar xC "$source_basename"\) \|\| \(mkdir "$target_filename" \&\& tar xC "$target_filename"\)\) &
+        $ssh $ssh_flags $target_host rdrecv $verbose $port $password \| \(\(cd "$target_filename" 2\>/dev/null \&\& mkdir "$source_basename" \&\& tar xC "$source_basename"\) \|\| \(mkdir "$target_filename" \&\& tar xC "$target_filename"\)\) &
         recv_pid=$!
-        $dryrun $ssh $ssh_flags $source_host \(cd "$source_filename" \&\& tar c .\) \| rdsend $verbose $rdma_target_host $port $password &
+        $ssh $ssh_flags $source_host \(cd "$source_filename" \&\& tar c .\) \| rdsend $verbose $rdma_target_host $port $password &
         send_pid=$!
         wait
     fi
 else
     if [ "$source_host" = "" ]; then
         # pipe to target filename
-        $dryrun $ssh $ssh_flags $target_host rdrecv $verbose $port $password \> "$target_filename" &
+        $ssh $ssh_flags $target_host rdrecv $verbose $port $password "$target_filename" &
         recv_pid=$!
         # send from source filename
-        $dryrun rdsend $verbose $rdma_target_host $port $password < "$source_filename" &
+        rdsend $verbose $rdma_target_host $port $password < "$source_filename" &
         send_pid=$!
         wait
     elif [ "$target_host" = "" ]; then
-        $dryrun rdrecv $verbose $port $password > "$target_filename" &
+        rdrecv $verbose $port $password "$target_filename" &
         recv_pid=$!
-        $dryrun $ssh $ssh_flags $source_host rdsend $verbose \$\{SSH_CLIENT%% \*\} $port $password \< "$source_filename"
+        $ssh $ssh_flags $source_host rdsend $verbose \$\{SSH_CLIENT%% \*\} $port $password \< "$source_filename"
         send_pid=$!
         wait
     else
-        $dryrun $ssh $ssh_flags $target_host rdrecv $verbose $port $password \> "$target_filename" &
+        $ssh $ssh_flags $target_host rdrecv $verbose $port $password "$target_filename" &
         recv_pid=$!
-        $dryrun $ssh $ssh_flags $source_host rdsend $verbose $rdma_target_host $port $password \< "$source_filename" &
+        $ssh $ssh_flags $source_host rdsend $verbose $rdma_target_host $port $password \< "$source_filename" &
         send_pid=$!
         wait
     fi
