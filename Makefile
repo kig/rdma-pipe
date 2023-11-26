@@ -26,7 +26,7 @@ clean:
 	$(RM) *.o *~ $(PROG)
 
 install: $(PROG)
-	install -m 0755 $(PROG) rdcp /usr/local/bin
+	install -m 0755 $(PROG) rdcp rdpipe /usr/local/bin
 
 uninstall:
-	cd /usr/local/bin && $(RM) $(PROG) rdcp
+	cd /usr/local/bin && $(RM) $(PROG) rdcp rdpipe 

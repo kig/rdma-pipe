@@ -1,0 +1,129 @@
+#!/usr/bin/ruby
+require 'optparse'
+
+VERSION = "1"
+
+options = {}
+OptionParser.new do |opts|
+  opts.banner = "Usage: rdpipe [options] HOST:CMD ..."
+
+  opts.on("-v", "--verbose", "Run verbosely") do |v|
+    options[:verbose] = v
+  end
+
+  opts.on("-n", "--dryrun", "Print out pipeline commands but don't execute them") do |v|
+  	options[:dryrun] = v
+  end
+
+  opts.on("-p", "--port=PORT", "Port to use for the pipeline") do |v|
+  	options[:port] = v
+  end
+
+  opts.on("-H", "--hostname=HOSTNAME", "Hostname or ip to use for the initiating server") do |v|
+  	options[:hostname] = v
+  end
+
+  opts.on_tail("-V", "--version", "Print out the version and exit") do |v|
+  	STDERR.puts(VERSION)
+  	exit(0)
+  end
+
+  opts.on_tail("-h", "--help", "Print out these instructions and exit") do |v|
+  	STDERR.puts(opts)
+  	exit(0)
+  end
+
+end.parse!
+
+
+if ARGV.length < 1
+	STDERR.puts(opts)
+	exit(1)
+end
+
+default_port = "7691"
+
+$dryrun = options[:dryrun]
+verbose = options[:verbose] ? "-v" : ""
+sendport = options[:port] || default_port
+localhost = options[:hostname] || (`hostname`.strip)
+
+def spawn(*args, opts)
+	if $dryrun
+		p(args)
+	else
+		Process.spawn(*args, opts)
+	end
+end
+
+
+key = rand.to_s
+
+# rdsend tries to open a connection until the other side has a port open or timeout happens.
+#
+
+hostcmds = ARGV.map {|arg| arg.split(":", 2) }
+hosts = hostcmds.map{|hc| hc[0] }
+hosts.push(localhost)
+
+host_idx = 1
+no_input = $stdin.isatty
+no_output = $stdin.isatty
+sshcmds = []
+hostcmds.each_with_index do |(host,cmd), idx|
+	nexthost = hosts[host_idx]
+	host_idx += 1
+
+	sshcmdprefix = if no_input 
+		"rdrecv #{verbose} #{sendport} #{key} >/dev/null; "
+	else
+		"rdrecv #{verbose} #{sendport} #{key} "
+	end
+
+	if cmd =~ /^</ # source from file, cancel output of the previous segment if it has some
+		if not no_input and idx == 0
+			no_output = true
+		end
+		sshcmdsuffix = "#{no_input ? "" : ">/dev/null; "}rdsend #{verbose} #{nexthost} #{sendport} #{key} #{cmd}"
+		no_input = false
+
+	elsif cmd =~ /^>/ # write to file, no stdout. In case there's no input, just create an empty file.
+		sshcmdsuffix = if no_input
+			if cmd =~ /^>>/
+				"touch -- #{cmd[2..-1]}; rdsend #{verbose} #{nexthost} #{sendport} #{key}"
+			else
+				"truncate -s 0 -- #{cmd[1..-1]}; rdsend #{verbose} #{nexthost} #{sendport} #{key}"
+			end
+		else
+			"#{cmd}; rdsend #{verbose} #{nexthost} #{sendport} #{key}"
+		end
+		no_input = true
+
+	else 
+		# If there's input, pipe it to the command, otherwise just run the command.
+		sshcmdsuffix = "#{no_input ? "" : "| "}(#{cmd}) | rdsend #{verbose} #{nexthost} #{sendport} #{key}"
+		no_input = false
+	end
+
+	sshcmd = sshcmdprefix + sshcmdsuffix
+
+	sshcmds << [host, sshcmd]
+end
+
+#if not no_input
+	recvpid = spawn("rdrecv", sendport, key, :in => :close, :err => :err, :out => :out)
+#end
+
+remotepids = sshcmds.reverse.map do |(host,cmd)| 
+	spawn("ssh", "-t", "-t", host, cmd, :in => :close, :err => :err, :out => :close)
+end
+
+#if not no_output
+	if verbose != ""
+		sendpid = spawn("rdsend", verbose, hosts[0], sendport, key, :in => $stdin.isatty ? :close : :in, :err => :err, :out => :close)
+	else
+		sendpid = spawn("rdsend", hosts[0], sendport, key, :in => $stdin.isatty ? :close : :in, :err => :err, :out => :close)
+	end
+#end
+
+Process.waitall()
