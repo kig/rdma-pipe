@@ -8,7 +8,7 @@ Maybe you have large files to copy around and you want to use all the bandwidth 
 
 5.3 GB/s file copy from ext4 RAID-10 to ZFS page cache across two Mellanox ConnectX-3 adapters.
 
-3.7 GB/s file copy from page cache to ext4 RAID-10 (the hardware and filesystem can do 10+ GB/s, still ways to go).
+3.7 GB/s file copy from page cache to ext4 RAID-10.
 
 # What's in the box
 
