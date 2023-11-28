@@ -253,7 +253,7 @@ NVMEoF - export NVMe devices over Fabrics. Great performance, but exports an ent
 
 `rcopy` - copy files over RDMA. 480 MB/s, probably because the write is slow. (Similar to rdrecv > file.)
 
-
+`wdt` - copy files over TCP. Supposed to be super fast, need to test. https://github.com/facebook/wdt
 
 # Benchmarks
 
