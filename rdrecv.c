@@ -135,7 +135,7 @@ int main(int argc, char *argv[]) {
 
   cm_channel = rdma_create_event_channel();
   if (!cm_channel)
-    return 1;
+    return 101;
 
   err = rdma_create_id(cm_channel, &listen_id, NULL, RDMA_PS_TCP);
   if (err)
