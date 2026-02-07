@@ -59,22 +59,17 @@ else
     fi
 fi
 
-# If the host is the same as the target, then we can just copy the file
-# locally.  Otherwise, we need to copy it remotely.
+# Use RDMA copy even for localhost-to-localhost transfers.
+# The RDMA path has performance optimizations (parallel I/O, O_DIRECT)
+# that regular cp lacks, making it faster even on the same host.
 
-if [ "$source_host" = "$target_host" ]; then
-    if [ "$source_host" = "" ]; then
-        if [ "$recursive" = "1" ]; then
-            cp -a "$source_filename" "$target_filename"
-        else
-            cp "$source_filename" "$target_filename"
-        fi
+# However, if both source and target are on the same remote host,
+# it's more efficient to do the copy on that host directly via ssh.
+if [ "$source_host" = "$target_host" ] && [ "$source_host" != "" ]; then
+    if [ "$recursive" = "1" ]; then
+        $ssh $ssh_flags $source_host cp -a "$source_filename" "$target_filename"
     else
-        if [ "$recursive" = "1" ]; then
-            $ssh $ssh_flags $source_host cp -a "$source_filename" "$target_filename"
-        else
-            $ssh $ssh_flags $source_host cp "$source_filename" "$target_filename"
-        fi
+        $ssh $ssh_flags $source_host cp "$source_filename" "$target_filename"
     fi
     exit
 fi
@@ -105,7 +100,14 @@ if [ "$recursive" = "1" ]; then
     # If target doesn't exist, create it. If it does, copy source into target/source.
     # (cd src && tar c .) | ((cd dst && mkdir src && tar xC src) || (mkdir dst && tar xC dst))
     source_basename=$(basename "$source_filename")
-    if [ "$source_host" = "" ]; then
+    if [ "$source_host" = "" ] && [ "$target_host" = "" ]; then
+        # Both source and target are local - use localhost RDMA loopback
+        rdrecv $verbose $port $password | ((cd "$target_filename" 2>/dev/null && mkdir "$source_basename" && tar xC "$source_basename") || (mkdir "$target_filename" && tar xC "$target_filename")) &
+        recv_pid=$!
+        (cd "$source_filename" && tar c .) | rdsend $verbose localhost $port $password &
+        send_pid=$!
+        wait
+    elif [ "$source_host" = "" ]; then
         $ssh $ssh_flags $target_host rdrecv $verbose $port $password \| \(\(cd "$target_filename" 2\>/dev/null \&\& mkdir "$source_basename" \&\& tar xC "$source_basename"\) \|\| \(mkdir "$target_filename" \&\& tar xC "$target_filename"\)\) &
         recv_pid=$!
         # send from source filename
@@ -126,7 +128,14 @@ if [ "$recursive" = "1" ]; then
         wait
     fi
 else
-    if [ "$source_host" = "" ]; then
+    if [ "$source_host" = "" ] && [ "$target_host" = "" ]; then
+        # Both source and target are local - use localhost RDMA loopback
+        rdrecv $verbose $port $password "$target_filename" &
+        recv_pid=$!
+        rdsend $verbose localhost $port $password < "$source_filename" &
+        send_pid=$!
+        wait
+    elif [ "$source_host" = "" ]; then
         # pipe to target filename
         $ssh $ssh_flags $target_host rdrecv $verbose $port $password "$target_filename" &
         recv_pid=$!
