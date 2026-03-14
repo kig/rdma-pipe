@@ -76,7 +76,8 @@ if [ "$recursive" = "" ]; then
         ssh_check_output=$($ssh $ssh_flags $source_host "if [ -d \"$source_filename\" ]; then echo DIR; elif [ -e \"$source_filename\" ]; then echo FILE; else echo NOTFOUND; fi" 2>&1)
         ssh_check_status=$?
         if [ $ssh_check_status -ne 0 ]; then
-            echo "rdcp: Failed to connect to $source_host" >&2
+            echo "rdcp: Failed to connect to $source_host via SSH" >&2
+            echo "rdcp: Run 'rdcheck $source_host' to diagnose connectivity issues." >&2
             exit 1
         fi
         if [ "$ssh_check_output" = "DIR" ]; then
@@ -112,6 +113,50 @@ fi
 # Remote copy using the rdma protocol.
 # We use rdsend on the source host to send the file, and rdrecv to receive it.
 
+# Pre-flight check: verify rdsend/rdrecv are available on each host.
+
+if [ "$target_host" != "" ]; then
+    target_check=$($ssh $ssh_flags $target_host "command -v rdrecv 2>/dev/null && echo RDRECV_OK" 2>&1)
+    target_ssh_status=$?
+    if [ $target_ssh_status -ne 0 ]; then
+        echo "rdcp: Failed to connect to $target_host via SSH" >&2
+        echo "rdcp: Run 'rdcheck $target_host' to diagnose connectivity issues." >&2
+        exit 1
+    fi
+    if ! echo "$target_check" | grep -q "RDRECV_OK"; then
+        echo "rdcp: rdrecv not found on $target_host" >&2
+        echo "rdcp: Install rdma-pipe on $target_host with: sudo make install" >&2
+        exit 1
+    fi
+fi
+
+if [ "$source_host" != "" ]; then
+    source_check=$($ssh $ssh_flags $source_host "command -v rdsend 2>/dev/null && echo RDSEND_OK" 2>&1)
+    source_ssh_status=$?
+    if [ $source_ssh_status -ne 0 ]; then
+        echo "rdcp: Failed to connect to $source_host via SSH" >&2
+        echo "rdcp: Run 'rdcheck $source_host' to diagnose connectivity issues." >&2
+        exit 1
+    fi
+    if ! echo "$source_check" | grep -q "RDSEND_OK"; then
+        echo "rdcp: rdsend not found on $source_host" >&2
+        echo "rdcp: Install rdma-pipe on $source_host with: sudo make install" >&2
+        exit 1
+    fi
+fi
+
+if [ "$target_host" = "" ] && ! command -v rdrecv >/dev/null 2>&1; then
+    echo "rdcp: rdrecv not found locally" >&2
+    echo "rdcp: Install rdma-pipe with: sudo make install" >&2
+    exit 1
+fi
+
+if [ "$source_host" = "" ] && ! command -v rdsend >/dev/null 2>&1; then
+    echo "rdcp: rdsend not found locally" >&2
+    echo "rdcp: Install rdma-pipe with: sudo make install" >&2
+    exit 1
+fi
+
 # Pick a random port number to use for the rdma connection.
 # We use the same port number for both rdsend and rdrecv.
 
@@ -125,10 +170,26 @@ password=$(head -c 12 /dev/urandom | od -An -t x | tr -d ' ')
 
 # If any of the programs fail, kill them all to avoid leaving zombies.
 
-function cleanup() {
+cleanup() {
     kill -HUP $recv_pid $send_pid 2>/dev/null
 }
 trap cleanup EXIT
+
+# Wait for both background processes and report RDMA errors helpfully.
+rdma_wait() {
+    local diag_host="${1:-}"
+    wait
+    local result=$?
+    if [ $result -ne 0 ]; then
+        echo "rdcp: RDMA transfer failed (exit code $result)" >&2
+        if [ -n "$diag_host" ]; then
+            echo "rdcp: Run 'rdcheck $diag_host' to diagnose RDMA connectivity issues." >&2
+        else
+            echo "rdcp: Run 'rdcheck' to diagnose RDMA connectivity issues." >&2
+        fi
+        exit $result
+    fi
+}
 
 if [ "$recursive" = "1" ]; then
     # This should work like cp -a source target 
@@ -141,19 +202,19 @@ if [ "$recursive" = "1" ]; then
         # send from source filename
         (cd "$source_filename" && tar c .) | rdsend $verbose $rdma_target_host $port $password &
         send_pid=$!
-        wait
+        rdma_wait "$target_host"
     elif [ "$target_host" = "" ]; then
         rdrecv $verbose $port $password | ((cd "$target_filename" 2>/dev/null && mkdir "$source_basename" && tar xC "$source_basename") || (mkdir "$target_filename" && tar xC "$target_filename")) &
         recv_pid=$!
         $ssh $ssh_flags $source_host \(cd "$source_filename" \&\& tar c .\) \| rdsend $verbose \$\{SSH_CLIENT%% \*\} $port $password &
         send_pid=$!
-        wait
+        rdma_wait "$source_host"
     else
         $ssh $ssh_flags $target_host rdrecv $verbose $port $password \| \(\(cd "$target_filename" 2\>/dev/null \&\& mkdir "$source_basename" \&\& tar xC "$source_basename"\) \|\| \(mkdir "$target_filename" \&\& tar xC "$target_filename"\)\) &
         recv_pid=$!
         $ssh $ssh_flags $source_host \(cd "$source_filename" \&\& tar c .\) \| rdsend $verbose $rdma_target_host $port $password &
         send_pid=$!
-        wait
+        rdma_wait "$target_host"
     fi
 else
     if [ "$source_host" = "" ]; then
@@ -163,18 +224,18 @@ else
         # send from source filename
         rdsend $verbose $rdma_target_host $port $password < "$source_filename" &
         send_pid=$!
-        wait
+        rdma_wait "$target_host"
     elif [ "$target_host" = "" ]; then
         rdrecv $verbose $port $password "$target_filename" &
         recv_pid=$!
         $ssh $ssh_flags $source_host rdsend $verbose \$\{SSH_CLIENT%% \*\} $port $password \< "$source_filename"
         send_pid=$!
-        wait
+        rdma_wait "$source_host"
     else
         $ssh $ssh_flags $target_host rdrecv $verbose $port $password "$target_filename" &
         recv_pid=$!
         $ssh $ssh_flags $source_host rdsend $verbose $rdma_target_host $port $password \< "$source_filename" &
         send_pid=$!
-        wait
+        rdma_wait "$target_host"
     fi
 fi

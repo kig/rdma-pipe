@@ -291,7 +291,13 @@ int main(int argc, char *argv[]) {
                        &comp_chan, buf, buf_len, &server_pdata)) {
     retries++;
     if (retries > 300) {
-      fprintf(stderr, "Connection timed out\n");
+      fprintf(stderr, "Connection timed out connecting to %s:%s\n", host, ports);
+      fprintf(stderr, "Possible causes:\n");
+      fprintf(stderr, "  - rdrecv is not running on %s\n", host);
+      fprintf(stderr, "  - Firewall is blocking port %s (rdcp uses ports 10000-19999)\n", ports);
+      fprintf(stderr, "  - RDMA hardware is not available or misconfigured\n");
+      fprintf(stderr, "  - Hosts are not on the same RDMA fabric\n");
+      fprintf(stderr, "Run 'rdcheck %s' to diagnose connectivity issues.\n", host);
       return 199;
     }
     rdisconnect(cm_channel, cm_id, mr, cq, pd, comp_chan);

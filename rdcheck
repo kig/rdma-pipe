@@ -1,0 +1,341 @@
+#!/bin/bash
+# rdcheck - Diagnose RDMA connectivity issues between hosts.
+#
+# Usage: rdcheck [-v] [-p PORT] [HOST]
+#
+#   -v         Verbose output
+#   -p PORT    Test specific port (default: random in 10000-19999 range)
+#   HOST       Remote host to check (user@host format supported)
+#
+# Checks performed:
+#   1. Local RDMA hardware available
+#   2. Local memory lock limit sufficient (ulimit -l >= 16500 kB)
+#   3. Local rdsend/rdrecv binaries installed
+#   If HOST is specified:
+#   4. SSH connectivity to HOST (passwordless, BatchMode)
+#   5. Remote RDMA hardware available on HOST
+#   6. Remote memory lock limit sufficient on HOST
+#   7. Remote rdsend/rdrecv binaries installed on HOST
+#   8. TCP port reachability in the 10000-19999 range
+#
+# Exit codes:
+#   0 - All checks passed
+#   1 - One or more checks failed
+
+verbose=0
+target_host=""
+port=""
+
+while getopts "vp:" flag; do
+    case "${flag}" in
+        v) verbose=1;;
+        p) port="${OPTARG}";;
+    esac
+done
+shift $((OPTIND - 1))
+
+if [ $# -gt 0 ]; then
+    target_host="$1"
+fi
+
+ssh_flags="-o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=1"
+
+overall_pass=0
+
+pass() { echo "  [PASS] $1"; }
+fail() { echo "  [FAIL] $1"; overall_pass=1; }
+warn() { echo "  [WARN] $1"; }
+info() { echo "         $1"; }
+
+# ---------------------------------------------------------------------------
+# Local checks
+# ---------------------------------------------------------------------------
+
+check_rdma_devices_local() {
+    echo "Checking local RDMA devices..."
+    if command -v ibv_devinfo >/dev/null 2>&1; then
+        local devinfo
+        devinfo=$(ibv_devinfo 2>&1)
+        if echo "$devinfo" | grep -q "hca_id:"; then
+            local devname
+            devname=$(echo "$devinfo" | grep "hca_id:" | head -1 | awk '{print $2}')
+            pass "RDMA device found: $devname"
+            if [ "$verbose" = "1" ]; then
+                echo "$devinfo" | grep -E "hca_id:|state:|transport:|fw_ver:" | sed 's/^/         /'
+            fi
+            return 0
+        else
+            fail "No RDMA devices found locally."
+            info "Install RDMA drivers and ensure hardware is present."
+            info "On Ubuntu: apt install -y rdma-core"
+            info "Check kernel modules: modprobe ib_uverbs mlx4_ib mlx5_ib"
+            return 1
+        fi
+    elif ls /sys/class/infiniband/ 2>/dev/null | grep -q .; then
+        local devname
+        devname=$(ls /sys/class/infiniband/ | head -1)
+        pass "RDMA device found: $devname (ibv_devinfo not available for details)"
+        warn "Install libibverbs-utils for full RDMA device info."
+        return 0
+    else
+        fail "No RDMA devices found locally."
+        info "Install RDMA drivers: apt install -y rdma-core libibverbs-dev"
+        info "Or check that RDMA hardware is present and drivers are loaded."
+        return 1
+    fi
+}
+
+check_ulimit_local() {
+    echo "Checking local memory lock limit (ulimit -l)..."
+    local memlock
+    memlock=$(ulimit -l)
+    if [ "$memlock" = "unlimited" ]; then
+        pass "Memory lock limit is unlimited"
+        return 0
+    elif [ "$memlock" -ge 16500 ] 2>/dev/null; then
+        pass "Memory lock limit is ${memlock} kB (>= 16500 kB required)"
+        return 0
+    else
+        fail "Memory lock limit is ${memlock} kB, but >= 16500 kB is required."
+        info "Fix: create /etc/security/limits.d/rdma.conf:"
+        info "  * soft memlock unlimited"
+        info "  * hard memlock unlimited"
+        info "Then log out and back in for the change to take effect."
+        return 1
+    fi
+}
+
+check_binaries_local() {
+    echo "Checking local rdma-pipe binaries (rdsend, rdrecv)..."
+    local missing=0
+    for bin in rdsend rdrecv; do
+        if command -v "$bin" >/dev/null 2>&1; then
+            pass "$bin found: $(command -v $bin)"
+        else
+            fail "$bin not found in PATH."
+            info "Install with: sudo make install"
+            missing=1
+        fi
+    done
+    return $missing
+}
+
+# ---------------------------------------------------------------------------
+# Remote checks
+# ---------------------------------------------------------------------------
+
+check_ssh_connectivity() {
+    local host="$1"
+    echo "Checking SSH connectivity to $host..."
+    local output
+    output=$(ssh $ssh_flags "$host" echo "SSH_OK" 2>&1)
+    local status=$?
+    if [ $status -eq 0 ] && echo "$output" | grep -q "SSH_OK"; then
+        pass "SSH connection to $host succeeded"
+        return 0
+    fi
+    fail "SSH connection to $host failed (exit code $status)."
+    if echo "$output" | grep -qi "permission denied\|publickey\|password"; then
+        info "SSH authentication failed. Set up passwordless SSH access:"
+        info "  ssh-keygen -t ed25519   # generate key if you don't have one"
+        info "  ssh-copy-id $host       # copy public key to remote host"
+    elif echo "$output" | grep -qi "connection refused"; then
+        info "SSH connection refused. Check that sshd is running on $host."
+    elif echo "$output" | grep -qi "no route to host\|network unreachable\|host unreachable"; then
+        info "Network unreachable. Check network connectivity to $host."
+    elif echo "$output" | grep -qi "timed out\|timeout"; then
+        info "SSH connection timed out. Check firewall rules and network connectivity."
+        info "Ensure TCP port 22 is open on $host."
+    else
+        info "SSH error output: $output"
+    fi
+    return 1
+}
+
+check_rdma_devices_remote() {
+    local host="$1"
+    echo "Checking RDMA devices on $host..."
+    local result
+    result=$(ssh $ssh_flags "$host" \
+        "if command -v ibv_devinfo >/dev/null 2>&1; then
+             ibv_devinfo 2>&1;
+         elif ls /sys/class/infiniband/ 2>/dev/null | grep -q .; then
+             echo 'RDMA_SYS_OK';
+             ls /sys/class/infiniband/;
+         else
+             echo 'NO_RDMA';
+         fi" 2>&1)
+    local status=$?
+    if [ $status -ne 0 ]; then
+        fail "Could not check RDMA devices on $host (SSH error)."
+        return 1
+    fi
+    if echo "$result" | grep -q "NO_RDMA"; then
+        fail "No RDMA devices found on $host."
+        info "Install RDMA drivers on $host: apt install -y rdma-core libibverbs-dev"
+        return 1
+    elif echo "$result" | grep -q "hca_id:\|RDMA_SYS_OK"; then
+        local devname
+        devname=$(echo "$result" | grep "hca_id:" | head -1 | awk '{print $2}')
+        if [ -z "$devname" ]; then
+            devname=$(echo "$result" | grep -v "RDMA_SYS_OK" | head -1)
+        fi
+        pass "RDMA device found on $host: $devname"
+        return 0
+    else
+        warn "Could not determine RDMA status on $host."
+        info "Run 'ibv_devinfo' on $host to check RDMA devices."
+        return 0
+    fi
+}
+
+check_ulimit_remote() {
+    local host="$1"
+    echo "Checking memory lock limit on $host (ulimit -l)..."
+    local memlock
+    memlock=$(ssh $ssh_flags "$host" "ulimit -l" 2>&1)
+    local status=$?
+    if [ $status -ne 0 ]; then
+        warn "Could not check ulimit on $host."
+        return 0
+    fi
+    if [ "$memlock" = "unlimited" ]; then
+        pass "Memory lock limit on $host is unlimited"
+        return 0
+    elif [ "$memlock" -ge 16500 ] 2>/dev/null; then
+        pass "Memory lock limit on $host is ${memlock} kB (>= 16500 kB required)"
+        return 0
+    else
+        fail "Memory lock limit on $host is ${memlock} kB, but >= 16500 kB is required."
+        info "Fix on $host: create /etc/security/limits.d/rdma.conf:"
+        info "  * soft memlock unlimited"
+        info "  * hard memlock unlimited"
+        info "Then log out and back in for the change to take effect."
+        return 1
+    fi
+}
+
+check_binaries_remote() {
+    local host="$1"
+    echo "Checking rdma-pipe binaries on $host (rdsend, rdrecv)..."
+    local missing=0
+    for bin in rdsend rdrecv; do
+        local result
+        result=$(ssh $ssh_flags "$host" "command -v $bin 2>/dev/null" 2>&1)
+        local status=$?
+        if [ $status -eq 0 ] && [ -n "$result" ]; then
+            pass "$bin found on $host: $result"
+        else
+            fail "$bin not found on $host."
+            info "Install rdma-pipe on $host with: sudo make install"
+            missing=1
+        fi
+    done
+    return $missing
+}
+
+check_port_reachable() {
+    local host="$1"
+    local test_port="$2"
+    echo "Checking if RDMA port $test_port is reachable on $host..."
+    # Try to connect on the port using nc.
+    # We start rdrecv on the remote side briefly to open the RDMA listen socket,
+    # then test reachability with nc. The remote command uses a trap to ensure
+    # rdrecv is always cleaned up when the SSH session ends.
+    if command -v nc >/dev/null 2>&1; then
+        local password="rdcheck_port_test_$$"
+        # Start rdrecv with a self-cleanup trap: it runs for at most 5 seconds
+        ssh $ssh_flags "$host" \
+            "rdrecv_pid=; trap 'kill \$rdrecv_pid 2>/dev/null' EXIT INT TERM; \
+             rdrecv $test_port $password >/dev/null 2>&1 & rdrecv_pid=\$!; sleep 5" &
+        local ssh_pid=$!
+        sleep 1
+        local nc_result=0
+        nc -z -w 3 "${host##*@}" "$test_port" 2>/dev/null || nc_result=$?
+        wait $ssh_pid 2>/dev/null
+        if [ $nc_result -eq 0 ]; then
+            pass "Port $test_port is reachable on $host"
+            return 0
+        else
+            fail "Port $test_port is NOT reachable on $host."
+            info "rdcp uses ports in the 10000-19999 range for RDMA transfers."
+            info "Open these ports in the firewall on $host:"
+            info "  iptables -A INPUT -p tcp --dport 10000:19999 -j ACCEPT"
+            info "  firewall-cmd --add-port=10000-19999/tcp --permanent"
+            return 1
+        fi
+    else
+        warn "nc (netcat) not found. Cannot test port reachability."
+        info "Install netcat to test port accessibility:"
+        info "  apt install -y netcat-openbsd"
+        info "Note: rdcp uses ports in the 10000-19999 range."
+        info "Ensure these ports are open in your firewall on $host."
+        return 0
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+echo "rdcheck: RDMA connectivity diagnostics"
+echo "======================================="
+echo ""
+
+# Local checks
+check_rdma_devices_local
+echo ""
+
+check_ulimit_local
+echo ""
+
+check_binaries_local
+echo ""
+
+# Remote checks (if host given)
+if [ -n "$target_host" ]; then
+    echo "Remote host: $target_host"
+    echo "---------------------------------------"
+    echo ""
+
+    if check_ssh_connectivity "$target_host"; then
+        echo ""
+        check_rdma_devices_remote "$target_host"
+        echo ""
+        check_ulimit_remote "$target_host"
+        echo ""
+        check_binaries_remote "$target_host"
+        echo ""
+
+        # Port reachability check
+        if [ -z "$port" ]; then
+            port=$(( 10000 + ( RANDOM % 10000 ) ))
+        fi
+        check_port_reachable "$target_host" "$port"
+        echo ""
+    else
+        echo ""
+        warn "Skipping remote checks because SSH connection failed."
+        echo ""
+    fi
+fi
+
+echo "======================================="
+if [ "$overall_pass" = "0" ]; then
+    echo "All checks passed."
+    echo ""
+    echo "If you still see 'Connection timed out', try:"
+    echo "  - Running 'ibv_rc_pingpong' between the hosts to test RDMA connectivity"
+    echo "  - Checking that both hosts are on the same RDMA fabric"
+else
+    echo "One or more checks FAILED. Fix the issues above and retry."
+    echo ""
+    if [ -n "$target_host" ]; then
+        echo "To rerun diagnostics: rdcheck $target_host"
+    else
+        echo "To also check a remote host: rdcheck <hostname>"
+    fi
+fi
+echo ""
+
+exit $overall_pass

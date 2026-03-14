@@ -202,6 +202,64 @@ In my testing, `pzstd` runs at 1.6 GB/s, `openssl` at 500 MB/s. For decent perf,
 
 # Troubleshooting
 
+## Using rdcheck to diagnose connection problems
+
+If `rdcp` fails with "Connection timed out" or another RDMA connectivity error, use the `rdcheck` tool to diagnose the issue:
+
+```bash
+# Check local RDMA setup only
+rdcheck
+
+# Check connectivity to a remote host
+rdcheck remote-host
+
+# Check connectivity to a specific host and port
+rdcheck -p 12345 remote-host
+
+# Verbose output (shows RDMA device details)
+rdcheck -v remote-host
+```
+
+`rdcheck` tests the following:
+
+1. **Local RDMA hardware** – checks that an RDMA device is present and visible to `ibv_devinfo`
+2. **Local memory lock limit** – checks `ulimit -l` is >= 16500 kB (required to pin RDMA buffers)
+3. **Local binaries** – checks that `rdsend` and `rdrecv` are installed
+4. If a remote host is given:
+   - **SSH connectivity** – checks that passwordless SSH works (required by `rdcp`)
+   - **Remote RDMA hardware** – checks RDMA devices on the remote host
+   - **Remote memory lock limit** – checks `ulimit -l` on the remote host
+   - **Remote binaries** – checks that `rdsend` and `rdrecv` are installed on the remote host
+   - **Port reachability** – checks that the RDMA port (10000-19999 range) is reachable through the firewall
+
+## Common issues
+
+### "Connection timed out"
+
+This error from `rdsend` means it could not connect to `rdrecv` within ~3 seconds. Common causes:
+
+- **rdrecv is not running** – the SSH command to start it may have failed
+- **rdrecv not installed on the remote host** – install with `sudo make install`
+- **Firewall blocking the RDMA port** – open ports 10000-19999 on the target host:
+  ```bash
+  iptables -A INPUT -p tcp --dport 10000:19999 -j ACCEPT
+  # or with firewalld:
+  firewall-cmd --add-port=10000-19999/tcp --permanent
+  ```
+- **RDMA hardware not available or not configured** – test with `ibv_rc_pingpong`
+- **Hosts not on the same RDMA fabric** – test with `ibv_rc_pingpong`
+
+Run `rdcheck remote-host` to identify the cause automatically.
+
+### SSH authentication fails
+
+`rdcp` uses SSH with `BatchMode=yes`, which disables password prompts. Set up passwordless SSH:
+
+```bash
+ssh-keygen -t ed25519   # generate a key if you don't have one
+ssh-copy-id remote-host  # copy the public key to the remote host
+```
+
 ## Check that <code>ulimit -l</code> is above 16500
 
 Run <code>ulimit -l</code> on your hosts to find out how much memory you can pin as a non-root user. 
