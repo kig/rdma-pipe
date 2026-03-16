@@ -1,3 +1,18 @@
 rdrecv
 rdsend
 *.o
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+terraform.tfvars
+
+# Benchmark results
+results-*/
+benchmark-*/
+
+# Python cache
+__pycache__/
+*.pyc
